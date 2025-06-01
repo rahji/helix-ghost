@@ -1,11 +1,21 @@
 package main
 
+// todo
+// ✅ create temp file and fill with text from json payload
+// ✅ open editor
+// 3. watch file for updates and send to client as json
+// 4. if editor exits, end websockets connection and delete temp file
+//    if client ends websockets connection, kill editor and delete temp file
+//    if another websockets connection is started, kill editor, delete temp file, start at step 1 again
+
 import (
 	"encoding/json"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"os/exec"
 
 	"github.com/alecthomas/kong"
 	"github.com/gobwas/ws"
@@ -13,7 +23,8 @@ import (
 )
 
 type CLIFlags struct {
-	Port    int  `kong:"default=4001,name='http-port',help='HTTP port'"`
+	Port int `kong:"default=4001,name='http-port',help='HTTP port'"`
+	// Helix   string `kong:"default='hx',name='helix-command',help='Helix command'"`
 	Verbose bool `kong:"name='verbose',help='Show extra output in the terminal'"`
 }
 
@@ -77,24 +88,57 @@ func handleWebSocketConnections(ln net.Listener) {
 
 		log.Println("WebSocket connection established")
 
+		tmpFile, _ := os.CreateTemp(os.TempDir(), "*.txt")
+		tmpFilename := tmpFile.Name()
+
 		go func(c net.Conn) {
+
 			defer c.Close()
 			for {
-				msg, op, err := wsutil.ReadClientData(c)
+				// msg, op, err := wsutil.ReadClientData(c)
+				msg, _, err := wsutil.ReadClientData(c)
 				if err != nil {
 					log.Println("Read error:", err)
 					return
 				}
-				var incoming GhostText
-				json.Unmarshal(msg, &incoming)
-				log.Printf("Title: %s", incoming.Title)
 
-				err = wsutil.WriteServerMessage(c, op, []byte("Echo: "+string(msg)))
+				var incoming GhostText
+				err = json.Unmarshal(msg, &incoming)
 				if err != nil {
-					log.Println("Write error:", err)
+					log.Println("Error unmarshalling payload:", err)
 					return
 				}
+
+				// log.Printf("Title: %s", incoming.Title)
+				log.Printf("message: %s", string(msg))
+				_ = os.WriteFile(tmpFilename, []byte(incoming.Text), 0o644)
+
+				// xxx check to see if file has changed and send new text to ws client
+
+				// err = wsutil.WriteServerMessage(c, op, []byte("Echo: "+string(msg)))
+				// if err != nil {
+				// 	log.Println("Write error:", err)
+				// 	return
+				// }
 			}
 		}(conn)
+
+		log.Println("Starting helix with temp file: " + tmpFilename)
+		err = openEditor("hx", tmpFilename)
+		if err != nil {
+			panic(err)
+		}
+		// cleanup after editor closes
+		os.Remove(tmpFilename)
+		conn.Close()
 	}
+}
+
+// openEditor opens an editor. The arguments are the command name and the filename to open
+func openEditor(editor string, fn string) error {
+	cmd := exec.Command(editor, fn)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
