@@ -23,10 +23,12 @@ import (
 )
 
 type CLIFlags struct {
-	Port int `kong:"default=4001,name='http-port',help='HTTP port'"`
-	// Helix   string `kong:"default='hx',name='helix-command',help='Helix command'"`
-	Verbose bool `kong:"name='verbose',help='Show extra output in the terminal'"`
+	Port    int    `kong:"default=4001,name='http-port',help='HTTP port'"`
+	Editor  string `kong:"default='hx',name='editor',help='Editor command'"`
+	Verbose bool   `kong:"name='verbose',help='Show extra output in the terminal'"`
 }
+
+var cli CLIFlags
 
 type GhostText struct {
 	Filename string
@@ -34,12 +36,26 @@ type GhostText struct {
 	Text     string `json:"text"`
 }
 
+var GTSession GhostText
+
+type FileChangeEvent struct {
+	Filename string
+	Content  []byte
+}
+
 func main() {
-	var cli CLIFlags
 	kong.Parse(&cli)
 
-	// Handle the initial GET request on port specified by Port flag
+	limiter := &ConnectionLimiter{}
+
+	// set up the handler for an HTTP request from the client
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+
+		if limiter.IsActive() {
+			http.Error(w, "WebSocket connection already active", http.StatusServiceUnavailable)
+			log.Println("Ignoring new connection: a ws connection is already active")
+			return
+		}
 
 		// Find an available port for WebSocket
 		wsListener, err := net.Listen("tcp", "127.0.0.1:0") // Random available port
@@ -51,8 +67,7 @@ func main() {
 		wsPort := wsListener.Addr().(*net.TCPAddr).Port
 		log.Printf("WebSocket will listen on port %d", wsPort)
 
-		// Start the WebSocket listener in the background
-		go handleWebSocketConnections(wsListener)
+		go handleWebSockets(wsListener, limiter)
 
 		// Respond to client with JSON payload described in GhostText PROTOCOL
 		resp := map[string]interface{}{
@@ -61,6 +76,7 @@ func main() {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
+
 	})
 
 	port := fmt.Sprintf(":%d", cli.Port)
@@ -70,71 +86,71 @@ func main() {
 	}
 }
 
-func handleWebSocketConnections(ln net.Listener) {
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			log.Println("Failed to accept connection:", err)
-			continue
-		}
+// handleWebSockets listens and intitiates websocket connections
+func handleWebSockets(ln net.Listener, limiter *ConnectionLimiter) {
 
-		// Perform WebSocket upgrade
-		_, err = ws.Upgrade(conn)
-		if err != nil {
-			log.Println("WebSocket upgrade failed:", err)
-			conn.Close()
-			continue
-		}
+	limiter.SetActive(true)
+	defer limiter.SetActive(false)
 
-		log.Println("WebSocket connection established")
-
-		tmpFile, _ := os.CreateTemp(os.TempDir(), "*.txt")
-		tmpFilename := tmpFile.Name()
-
-		go func(c net.Conn) {
-
-			defer c.Close()
-			for {
-				// msg, op, err := wsutil.ReadClientData(c)
-				msg, _, err := wsutil.ReadClientData(c)
-				if err != nil {
-					log.Println("Read error:", err)
-					return
-				}
-
-				var incoming GhostText
-				err = json.Unmarshal(msg, &incoming)
-				if err != nil {
-					log.Println("Error unmarshalling payload:", err)
-					return
-				}
-
-				// log.Printf("Title: %s", incoming.Title)
-				log.Printf("message: %s", string(msg))
-				_ = os.WriteFile(tmpFilename, []byte(incoming.Text), 0o644)
-
-				// xxx check to see if file has changed and send new text to ws client
-
-				// err = wsutil.WriteServerMessage(c, op, []byte("Echo: "+string(msg)))
-				// if err != nil {
-				// 	log.Println("Write error:", err)
-				// 	return
-				// }
-			}
-		}(conn)
-
-		log.Println("Starting helix with temp file: " + tmpFilename)
-		err = openEditor("hx", tmpFilename)
-		if err != nil {
-			panic(err)
-		}
-		// cleanup after editor closes
-		os.Remove(tmpFilename)
-		conn.Close()
+	conn, err := ln.Accept()
+	if err != nil {
+		log.Println("Failed to accept connection:", err)
+		return
 	}
+
+	defer conn.Close()
+
+	// Perform WebSocket upgrade
+	_, err = ws.Upgrade(conn)
+	if err != nil {
+		log.Println("WebSocket upgrade failed:", err)
+		conn.Close()
+		return
+	}
+
+	log.Println("WebSocket connection established")
+
+	// Read only the first message from the client, which contains the existing textarea contents.
+	// We can't continuously read changes to the textarea since Helix has no way to update the buffer.
+	// It also doesn't update the buffer when the file contents are changed from outside Helix!
+	msg, _, err := wsutil.ReadClientData(conn)
+	if err != nil {
+		log.Println("Read error:", err)
+		return
+	}
+
+	if err := json.Unmarshal(msg, &GTSession); err != nil {
+		log.Println("Error unmarshalling payload:", err)
+		return
+	}
+
+	tempFile, err := createTempFile(GTSession.Text)
+	if err != nil {
+		log.Fatal("Couldn't create temp file: ", err)
+	}
+	GTSession.Filename = tempFile.Name()
+
+	// xxx file watcher goroutine needs to start to track changes and write them to the websocket!
+
+	if err := openEditor(cli.Editor, GTSession.Filename); err != nil {
+		log.Fatal("Couldn't open editor with temp file: ", err)
+	}
+
 }
 
-// openEditor opens an editor. The arguments are the command name and the filename to open
+// createTempFile creates a temp file and populates it with the provided string
+func createTempFile(text string) (*os.File, error) {
+	tempFile, err := os.CreateTemp(os.TempDir(), "*.txt")
+	if err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(tempFile.Name(), []byte(text), 0o644); err != nil {
+		return nil, err
+	}
+	return tempFile, nil
+}
+
+// openEditor opens an a specified file in an editor
 func openEditor(editor string, fn string) error {
 	cmd := exec.Command(editor, fn)
 	cmd.Stdin = os.Stdin
