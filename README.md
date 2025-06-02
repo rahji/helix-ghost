@@ -2,6 +2,8 @@
 
 Edit web browser textareas in [Helix](https://helix-editor.vercel.app/)!
 
+![screenshot](screenshot.png)
+
 ## Overview
 
 [GhostText](https://ghosttext.fregante.com/) is a browser extension that lets you edit textarea content in your
