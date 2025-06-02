@@ -4,6 +4,8 @@ Edit web browser textareas in [Helix](https://helix-editor.vercel.app/)!
 
 ![screenshot](screenshot.png)
 
+(Actually, it should work with any editor: vim, nano, micro, etc.) 🙂
+
 ## Overview
 
 [GhostText](https://ghosttext.fregante.com/) is a browser extension that lets you edit textarea content in your
@@ -15,8 +17,9 @@ more places to use it, in general.
 There are GhostText clients for lots of editors out there, but there wasn't one for
 Helix. So I made this one. Since Helix doesn't have a plug-in system, scripting, etc.,
 this was a little tricky. And the result is more basic than some of the other, more
-complex editor plug-ins for GhostText. (This tracks with how Helix's simplicity
-demands that you think simpler, which is the main thing I like about it.)
+complex editor plug-ins for GhostText. This tracks with how Helix's simplicity
+demands that you think simpler, which is the main thing I like about it. Because this client
+was designed to be simple, it should work equally well with other editors (vim, nano, micro, whatever).
 
 ## Installation
 
@@ -45,7 +48,8 @@ If you want to quit the helix-ghost server altogether, use `Ctrl+C`
 ## Notes and Limitations
 
 * This server assumes that your Helix command is `hx`, but you can change that by using the `--editor=` flag.
-  There is also an `http-port=` flag but you shouldn't need it. If you change it, you'll need to also enter the
+  You could also use a different editor command entirely, like `vim`
+* There is also an `http-port=` flag but you shouldn't need it. If you change it, you'll need to also enter the
   same port number in the GhostText extension settings.
 * Helix assumes the file is plain text. If you want to switch to something like Markdown or some programming
   language, you can use the helix command `:set-language`
