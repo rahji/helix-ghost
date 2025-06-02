@@ -44,6 +44,9 @@ If you want to quit the helix-ghost server altogether, use `Ctrl+C`
 
 ## Notes and Limitations
 
+* This server assumes that your Helix command is `hx`, but you can change that by using the `--editor=` flag.
+  There is also an `http-port=` flag but you shouldn't need it. If you change it, you'll need to also enter the
+  same port number in the GhostText extension settings.
 * Helix assumes the file is plain text. If you want to switch to something like Markdown or some programming
   language, you can use the helix command `:set-language`
 * I've tested this in Windows and WSL (Ubuntu) and it works with both. Let me know if you try it with another OS.
