@@ -1,10 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 )
@@ -62,8 +64,13 @@ func watchFile(fn string, c chan<- FileChangeEvent) {
 			if event.Name != fn {
 				break
 			}
-			log.Printf("File event: %s", event.Name)
-			content, err := os.ReadFile(event.Name)
+			if event.Op&(fsnotify.Create|fsnotify.Write) == 0 {
+				// Ignore other operations like Remove, Rename, Chmod, etc.
+				break
+			}
+			// log.Printf("Created/written: %s", event.Name)
+
+			content, err := readFileWhenReady(event.Name, 500*time.Millisecond)
 			if err != nil {
 				log.Println("Error reading file: ", err)
 				continue
@@ -82,46 +89,22 @@ func watchFile(fn string, c chan<- FileChangeEvent) {
 	}
 }
 
-// func debugFileAccess(filename string) {
-// 	log.Printf("=== Debugging file access for: %q ===", filename)
-
-// 	// Current working directory
-// 	wd, _ := os.Getwd()
-// 	log.Printf("Working directory: %s", wd)
-
-// 	// Absolute path
-// 	abs, _ := filepath.Abs(filename)
-// 	log.Printf("Absolute path: %s", abs)
-
-// 	// Check if file exists
-// 	if info, err := os.Stat(filename); err != nil {
-// 		log.Printf("os.Stat error: %v", err)
-
-// 		// Check directory
-// 		dir := filepath.Dir(filename)
-// 		if dirInfo, err := os.Stat(dir); err != nil {
-// 			log.Printf("Directory %q stat error: %v", dir, err)
-// 		} else {
-// 			log.Printf("Directory %q exists, mode: %v", dir, dirInfo.Mode())
-
-// 			// List directory contents
-// 			if entries, err := os.ReadDir(dir); err != nil {
-// 				log.Printf("ReadDir error: %v", err)
-// 			} else {
-// 				log.Printf("Directory contents:")
-// 				for _, entry := range entries {
-// 					log.Printf("  %q", entry.Name())
-// 				}
-// 			}
-// 		}
-// 	} else {
-// 		log.Printf("File exists, size: %d, mode: %v", info.Size(), info.Mode())
-// 	}
-
-// 	// Try reading
-// 	if content, err := os.ReadFile(filename); err != nil {
-// 		log.Printf("os.ReadFile error: %v", err)
-// 	} else {
-// 		log.Printf("Successfully read %d bytes", len(content))
-// 	}
-// }
+// readFileWhenReady keeps trying to read a file that could otherwise
+// generate a "not found" error. This seems to be necessary because
+// of the way that editors like helix and vim save their files.
+func readFileWhenReady(path string, timeout time.Duration) ([]byte, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			return data, nil
+		}
+		if !os.IsNotExist(err) {
+			return nil, err // fail fast on other errors
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("file %s did not appear in time", path)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}

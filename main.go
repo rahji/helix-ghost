@@ -135,7 +135,7 @@ func handleWebSockets(ln net.Listener, limiter *ConnectionLimiter) {
 	for {
 		select {
 		case fileEvent := <-fileChanges:
-			log.Printf("File changed: %s", fileEvent.Filename)
+			// log.Printf("File changed: %s", fileEvent.Filename)
 
 			response := struct {
 				Text string `json:"text"`
@@ -147,7 +147,7 @@ func handleWebSockets(ln net.Listener, limiter *ConnectionLimiter) {
 				continue
 			}
 
-			log.Println("About to respond to client with ", string(responseData))
+			// log.Println("About to respond to client with ", string(responseData))
 
 			err = wsutil.WriteServerMessage(conn, op, responseData)
 			if err != nil {
