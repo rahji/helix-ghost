@@ -4,7 +4,7 @@ Edit web browser textareas in [Helix](https://helix-editor.vercel.app/)!
 
 ![screenshot](screenshot.png)
 
-(Actually, it should work with any editor: vim, nano, micro, etc.) 🙂
+(Actually, it works with most text editors: kakoune, vim, nano, micro, etc.) 🙂
 
 ## Overview
 
