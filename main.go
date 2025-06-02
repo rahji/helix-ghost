@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 
 	"github.com/alecthomas/kong"
 	"github.com/gobwas/ws"
@@ -13,9 +14,8 @@ import (
 )
 
 type CLIFlags struct {
-	Port    int    `kong:"default=4001,name='http-port',help='HTTP port'"`
-	Editor  string `kong:"default='hx',name='editor',help='Editor command'"`
-	Verbose bool   `kong:"name='verbose',help='Show extra output in the terminal'"`
+	Port   int    `kong:"default=4001,name='http-port',help='HTTP port'"`
+	Editor string `kong:"default='hx',name='editor',help='Editor command'"`
 }
 
 var cli CLIFlags
@@ -28,11 +28,6 @@ type GhostText struct {
 
 var GTSession GhostText
 
-type FileChangeEvent struct {
-	Filename string
-	Content  []byte
-}
-
 func main() {
 	kong.Parse(&cli)
 
@@ -43,7 +38,7 @@ func main() {
 
 		if limiter.IsActive() {
 			http.Error(w, "WebSocket connection already active", http.StatusServiceUnavailable)
-			log.Println("Ignoring new connection: a ws connection is already active")
+			// log.Println("Ignoring new connection: a ws connection is already active")
 			return
 		}
 
@@ -121,25 +116,25 @@ func handleWebSockets(ln net.Listener, limiter *ConnectionLimiter) {
 	}
 	GTSession.Filename = fn
 
-	// open the editor in the background
+	// open the editor in the background, with  a channel to signal this handler when the editor quits
+	editorDone := make(chan bool, 1)
 	go func() {
-		if err := openEditor(cli.Editor, GTSession.Filename); err != nil {
-			log.Fatal("Couldn't open editor with temp file: ", err)
-		}
+		err := openEditor(cli.Editor, GTSession.Filename)
+		editorDone <- (err == nil) // true = success, false = error
 	}()
 
-	// set up a file watcher in the background
-	fileChanges := make(chan FileChangeEvent, 1)
-	go watchFile(GTSession.Filename, fileChanges)
+	// set up a file watcher in the background, with a channel to communicate on
+	fileChangeEvents := make(chan FileChangeEvent, 1)
+	go watchFile(GTSession.Filename, fileChangeEvents)
 
 	for {
 		select {
-		case fileEvent := <-fileChanges:
+		case fc := <-fileChangeEvents:
 			// log.Printf("File changed: %s", fileEvent.Filename)
 
 			response := struct {
 				Text string `json:"text"`
-			}{string(fileEvent.Content)}
+			}{string(fc.Content)}
 
 			responseData, err := json.Marshal(response)
 			if err != nil {
@@ -148,12 +143,21 @@ func handleWebSockets(ln net.Listener, limiter *ConnectionLimiter) {
 			}
 
 			// log.Println("About to respond to client with ", string(responseData))
-
 			err = wsutil.WriteServerMessage(conn, op, responseData)
 			if err != nil {
 				log.Println("Write error:", err)
 				return
 			}
+		case e := <-editorDone:
+			// Handle editor exit by deleting the temp file, disabling the connection limiter,
+			// clearing the GTSession, and returning from this handler function
+			log.Printf("Editor exited cleanly: %v", e)
+			if err := os.Remove(GTSession.Filename); err != nil {
+				log.Printf("Failed to remove file %s: %s", GTSession.Filename, err)
+			}
+			limiter.SetActive(false)
+			GTSession = GhostText{}
+			return
 		}
 	}
 }

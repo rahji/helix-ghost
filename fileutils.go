@@ -11,6 +11,11 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
+type FileChangeEvent struct {
+	Filename string
+	Content  []byte
+}
+
 // createTempFile creates a temp file and populates it with the provided string
 func createTempFile(text string) (string, error) {
 	tempFile, err := os.CreateTemp("", "*.txt")
