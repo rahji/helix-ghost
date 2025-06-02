@@ -1,21 +1,11 @@
 package main
 
-// todo
-// ✅ create temp file and fill with text from json payload
-// ✅ open editor
-// 3. watch file for updates and send to client as json
-// 4. if editor exits, end websockets connection and delete temp file
-//    if client ends websockets connection, kill editor and delete temp file
-//    if another websockets connection is started, kill editor, delete temp file, start at step 1 again
-
 import (
 	"encoding/json"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
-	"os"
-	"os/exec"
 
 	"github.com/alecthomas/kong"
 	"github.com/gobwas/ws"
@@ -113,7 +103,7 @@ func handleWebSockets(ln net.Listener, limiter *ConnectionLimiter) {
 	// Read only the first message from the client, which contains the existing textarea contents.
 	// We can't continuously read changes to the textarea since Helix has no way to update the buffer.
 	// It also doesn't update the buffer when the file contents are changed from outside Helix!
-	msg, _, err := wsutil.ReadClientData(conn)
+	msg, op, err := wsutil.ReadClientData(conn)
 	if err != nil {
 		log.Println("Read error:", err)
 		return
@@ -124,37 +114,46 @@ func handleWebSockets(ln net.Listener, limiter *ConnectionLimiter) {
 		return
 	}
 
-	tempFile, err := createTempFile(GTSession.Text)
+	// make a temp file based on the current textarea contents
+	fn, err := createTempFile(GTSession.Text)
 	if err != nil {
 		log.Fatal("Couldn't create temp file: ", err)
 	}
-	GTSession.Filename = tempFile.Name()
+	GTSession.Filename = fn
 
-	// xxx file watcher goroutine needs to start to track changes and write them to the websocket!
+	// open the editor in the background
+	go func() {
+		if err := openEditor(cli.Editor, GTSession.Filename); err != nil {
+			log.Fatal("Couldn't open editor with temp file: ", err)
+		}
+	}()
 
-	if err := openEditor(cli.Editor, GTSession.Filename); err != nil {
-		log.Fatal("Couldn't open editor with temp file: ", err)
+	// set up a file watcher in the background
+	fileChanges := make(chan FileChangeEvent, 1)
+	go watchFile(GTSession.Filename, fileChanges)
+
+	for {
+		select {
+		case fileEvent := <-fileChanges:
+			log.Printf("File changed: %s", fileEvent.Filename)
+
+			response := struct {
+				Text string `json:"text"`
+			}{string(fileEvent.Content)}
+
+			responseData, err := json.Marshal(response)
+			if err != nil {
+				log.Printf("Error marshalling response: %v", err)
+				continue
+			}
+
+			log.Println("About to respond to client with ", string(responseData))
+
+			err = wsutil.WriteServerMessage(conn, op, responseData)
+			if err != nil {
+				log.Println("Write error:", err)
+				return
+			}
+		}
 	}
-
-}
-
-// createTempFile creates a temp file and populates it with the provided string
-func createTempFile(text string) (*os.File, error) {
-	tempFile, err := os.CreateTemp(os.TempDir(), "*.txt")
-	if err != nil {
-		return nil, err
-	}
-	if err := os.WriteFile(tempFile.Name(), []byte(text), 0o644); err != nil {
-		return nil, err
-	}
-	return tempFile, nil
-}
-
-// openEditor opens an a specified file in an editor
-func openEditor(editor string, fn string) error {
-	cmd := exec.Command(editor, fn)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
 }
